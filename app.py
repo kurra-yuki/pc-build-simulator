@@ -11,7 +11,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
 # ページ設定
-st.set_page_config(page_title="PC Build Simulator", layout="wide")
+st.set_page_config(page_title="PC Build Simulator", page_icon="icon.png", layout="wide")
 
 # タイトル
 st.title("🖥️ PC Build Simulator")

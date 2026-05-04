@@ -25,54 +25,148 @@ def load_parts_data():
 parts_df = load_parts_data()
 
 # パーツタイプごとに分類
-cpu_parts = parts_df[parts_df["type"] == "CPU"][["name", "price"]].reset_index(drop=True)
-gpu_parts = parts_df[parts_df["type"] == "GPU"][["name", "price"]].reset_index(drop=True)
-mem_parts = parts_df[parts_df["type"] == "MEM"][["name", "price"]].reset_index(drop=True)
-ssd_parts = parts_df[parts_df["type"] == "SSD"][["name", "price"]].reset_index(drop=True)
+part_types = parts_df["type"].unique().tolist()
+
+# 表示ラベルを定義
+type_labels = {
+    "CPU": "CPU",
+    "GPU": "GPU",
+    "MEM": "メモリ",
+    "SSD": "ストレージ",
+    "MB": "マザーボード",
+    "PSU": "電源",
+    "CASE": "ケース",
+    "COOLER": "CPUクーラー",
+    "FAN": "ファン"
+}
+
+parts_by_type = {
+    tp: parts_df[parts_df["type"] == tp][["name", "price", "score", "power", "socket", "mem_type", "wattage", "power_req"]].reset_index(drop=True)
+    for tp in part_types
+}
+
+# おすすめ自動構成ロジック
+def recommend_parts(parts_df, purpose, budget):
+    budget_ratios = {
+        "ゲーム": {"CPU": 0.18, "GPU": 0.35, "MEM": 0.10, "SSD": 0.12, "MB": 0.08, "PSU": 0.06, "CASE": 0.05, "COOLER": 0.04, "FAN": 0.02},
+        "クリエイティブ作業": {"CPU": 0.25, "GPU": 0.20, "MEM": 0.12, "SSD": 0.15, "MB": 0.08, "PSU": 0.07, "CASE": 0.05, "COOLER": 0.05, "FAN": 0.03},
+        "動画視聴・ネット": {"CPU": 0.20, "GPU": 0.10, "MEM": 0.12, "SSD": 0.18, "MB": 0.10, "PSU": 0.08, "CASE": 0.10, "COOLER": 0.05, "FAN": 0.07},
+        "ライト作業": {"CPU": 0.22, "GPU": 0.10, "MEM": 0.13, "SSD": 0.16, "MB": 0.10, "PSU": 0.08, "CASE": 0.08, "COOLER": 0.05, "FAN": 0.08}
+    }
+    ratios = budget_ratios.get(purpose, budget_ratios["ライト作業"])
+    recommended = {}
+
+    for tp in part_types:
+        parts = parts_by_type[tp].copy()
+        if parts.empty:
+            continue
+
+        target = int(budget * ratios.get(tp, 0.05))
+        target = max(target, int(parts["price"].min()))
+        affordable = parts[parts["price"] <= target]
+
+        if not affordable.empty:
+            chosen = affordable.sort_values(["score", "price"], ascending=[False, True]).iloc[0]
+        else:
+            chosen = parts.sort_values(["price", "score"], ascending=[True, False]).iloc[0]
+
+        recommended[tp] = chosen["name"]
+
+    return recommended
+
+# 互換性チェック関数
+def get_attr(tp, name, attr):
+    if name == "選択なし":
+        return None
+    row = parts_by_type[tp][parts_by_type[tp]["name"] == name]
+    if row.empty:
+        return None
+    return row[attr].values[0] if attr in row.columns and not pd.isna(row[attr].values[0]) else None
+
+def check_compatibility(selected_parts):
+    warnings = []
+    
+    cpu_socket = get_attr("CPU", selected_parts.get("CPU"), "socket")
+    mb_socket = get_attr("MB", selected_parts.get("MB"), "socket")
+    mb_mem_type = get_attr("MB", selected_parts.get("MB"), "mem_type")
+    mem_type = get_attr("MEM", selected_parts.get("MEM"), "mem_type")
+    psu_wattage = get_attr("PSU", selected_parts.get("PSU"), "wattage")
+    gpu_power = get_attr("GPU", selected_parts.get("GPU"), "power_req")
+    cpu_power = get_attr("CPU", selected_parts.get("CPU"), "power")
+    
+    if cpu_socket and mb_socket and cpu_socket != mb_socket:
+        warnings.append("⚠️ CPUとマザーボードのソケットが一致しません。")
+    
+    if mem_type and mb_mem_type and mem_type != mb_mem_type:
+        warnings.append("⚠️ メモリタイプとマザーボードが一致しません。")
+    
+    if psu_wattage and gpu_power and cpu_power:
+        total_power = gpu_power + cpu_power + 100  # 余裕分
+        if total_power > psu_wattage:
+            warnings.append(f"⚠️ 電源容量が不足しています。必要: {total_power}W, 現在: {psu_wattage}W")
+    
+    return warnings
 
 # サイドバーでパーツ選択
 st.sidebar.header("🔧 パーツを選択")
 
-selected_cpu = st.sidebar.selectbox("CPU", ["選択なし"] + cpu_parts["name"].tolist())
-selected_gpu = st.sidebar.selectbox("GPU", ["選択なし"] + gpu_parts["name"].tolist())
-selected_mem = st.sidebar.selectbox("メモリ", ["選択なし"] + mem_parts["name"].tolist())
-selected_ssd = st.sidebar.selectbox("ストレージ", ["選択なし"] + ssd_parts["name"].tolist())
+st.sidebar.subheader("✨ おすすめ構成")
+purpose = st.sidebar.radio("ご利用目的", ["ゲーム", "クリエイティブ作業", "ライト作業", "動画視聴・ネット"], index=0)
+budget = st.sidebar.slider("予算（円）", 50000, 300000, 150000, step=10000)
+
+if st.sidebar.button("おすすめ構成を生成"):
+    recommended_parts = recommend_parts(parts_df, purpose, budget)
+    for tp, name in recommended_parts.items():
+        st.session_state[f"select_{tp}"] = name
+    st.session_state["recommend_message"] = f"{purpose}向けのおすすめ構成を予算{budget:,}円で生成しました。"
+
+if "recommend_message" in st.session_state:
+    st.sidebar.info(st.session_state["recommend_message"])
+
+selected_parts = {}
+for tp in part_types:
+    label = type_labels.get(tp, tp)
+    options = ["選択なし"] + parts_by_type[tp]["name"].tolist()
+    selected_parts[tp] = st.sidebar.selectbox(label, options, key=f"select_{tp}")
 
 # 選択したパーツの価格を取得する関数
-def get_price(parts_list, part_name):
+def get_price(part_type, part_name):
     if part_name == "選択なし":
         return 0
-    result = parts_list[parts_list["name"] == part_name]["price"]
+    result = parts_by_type[part_type][parts_by_type[part_type]["name"] == part_name]["price"]
+    return result.values[0] if len(result) > 0 else 0
+
+# 選択したパーツのスコアを取得する関数
+def get_score(part_type, part_name):
+    if part_name == "選択なし":
+        return 0
+    result = parts_by_type[part_type][parts_by_type[part_type]["name"] == part_name]["score"]
     return result.values[0] if len(result) > 0 else 0
 
 # 価格を計算
-cpu_price = get_price(cpu_parts, selected_cpu)
-gpu_price = get_price(gpu_parts, selected_gpu)
-mem_price = get_price(mem_parts, selected_mem)
-ssd_price = get_price(ssd_parts, selected_ssd)
-total_price = cpu_price + gpu_price + mem_price + ssd_price
+selected_prices = {tp: get_price(tp, name) for tp, name in selected_parts.items()}
+total_price = sum(selected_prices.values())
 
 # メイン画面：構成一覧
 st.header("📋 PC構成一覧")
 
 # 構成表を作成
 config_data = {
-    "パーツ": ["CPU", "GPU", "メモリ", "ストレージ", "合計"],
-    "商品名": [
-        selected_cpu if selected_cpu != "選択なし" else "-",
-        selected_gpu if selected_gpu != "選択なし" else "-",
-        selected_mem if selected_mem != "選択なし" else "-",
-        selected_ssd if selected_ssd != "選択なし" else "-",
-        ""
-    ],
-    "価格": [
-        f"¥{cpu_price:,.0f}" if cpu_price > 0 else "¥0",
-        f"¥{gpu_price:,.0f}" if gpu_price > 0 else "¥0",
-        f"¥{mem_price:,.0f}" if mem_price > 0 else "¥0",
-        f"¥{ssd_price:,.0f}" if ssd_price > 0 else "¥0",
-        f"¥{total_price:,.0f}"
-    ]
+    "パーツ": [],
+    "商品名": [],
+    "価格": []
 }
+for tp in part_types:
+    part_label = type_labels.get(tp, tp)
+    part_name = selected_parts[tp] if selected_parts[tp] != "選択なし" else "-"
+    part_price = selected_prices[tp]
+    config_data["パーツ"].append(part_label)
+    config_data["商品名"].append(part_name)
+    config_data["価格"].append(f"¥{part_price:,.0f}" if part_price > 0 else "¥0")
+
+config_data["パーツ"].append("合計")
+config_data["商品名"].append("")
+config_data["価格"].append(f"¥{total_price:,.0f}")
 
 config_df = pd.DataFrame(config_data)
 st.dataframe(config_df, width='stretch', hide_index=True)
@@ -81,7 +175,7 @@ st.dataframe(config_df, width='stretch', hide_index=True)
 st.metric("💰 合計金額", f"¥{total_price:,.0f}")
 
 # コメント生成ロジック
-def generate_comment(cpu_score, gpu_score, mem_price, total):
+def generate_comment(cpu_score, gpu_score, total, selected_count, total_count):
     comments = []
     
     # GPU性能に基づくコメント
@@ -111,28 +205,34 @@ def generate_comment(cpu_score, gpu_score, mem_price, total):
         comments.append("💎 高級構成。最高のパフォーマンスを求める方向け。")
     
     # 完全性のコメント
-    selected_count = sum([selected_cpu != "選択なし", selected_gpu != "選択なし", 
-                         selected_mem != "選択なし", selected_ssd != "選択なし"])
-    if selected_count == 4:
-        comments.append("✅ すべてのパーツが選択されています。")
-    elif selected_count > 0:
-        comments.append(f"⚠️ まだ{4 - selected_count}個のパーツが未選択です。")
-    else:
+    if selected_count == 0:
         comments.append("⚠️ パーツをまず選択してください。")
-    
+    elif selected_count == total_count:
+        comments.append("✅ すべてのパーツが選択されています。")
+    else:
+        comments.append(f"⚠️ まだ{total_count - selected_count}個のパーツが未選択です。")
+
     return "\n".join(comments)
 
 # パーツのスコア取得
-cpu_score = 0
-gpu_score = 0
-if selected_cpu != "選択なし":
-    cpu_score = parts_df[(parts_df["type"] == "CPU") & (parts_df["name"] == selected_cpu)]["score"].values[0]
-if selected_gpu != "選択なし":
-    gpu_score = parts_df[(parts_df["type"] == "GPU") & (parts_df["name"] == selected_gpu)]["score"].values[0]
+cpu_score = get_score("CPU", selected_parts.get("CPU", "選択なし"))
+gpu_score = get_score("GPU", selected_parts.get("GPU", "選択なし"))
+selected_count = sum(1 for name in selected_parts.values() if name != "選択なし")
+total_count = len(selected_parts)
 
 # コメント表示
 st.header("💬 構成コメント")
-st.info(generate_comment(cpu_score, gpu_score, mem_price, total_price))
+st.info(generate_comment(cpu_score, gpu_score, total_price, selected_count, total_count))
+
+# 互換性チェック
+st.header("🔍 互換性チェック")
+if st.button("互換性をチェック"):
+    warnings = check_compatibility(selected_parts)
+    if warnings:
+        for w in warnings:
+            st.error(w)
+    else:
+        st.success("✅ 互換性に問題ありません。")
 
 # PDF出力機能
 def generate_pdf(config_data, total_price, comment):
@@ -173,7 +273,7 @@ def generate_pdf(config_data, total_price, comment):
     table_data = [
         ["パーツ", "商品名", "価格"]
     ]
-    for i in range(4):
+    for i in range(len(config_data["パーツ"]) - 1):
         table_data.append([
             config_data["パーツ"][i],
             config_data["商品名"][i],
@@ -218,7 +318,7 @@ def generate_pdf(config_data, total_price, comment):
 # ダウンロードボタン
 st.header("📥 ダウンロード")
 if total_price > 0:
-    comment = generate_comment(cpu_score, gpu_score, mem_price, total_price)
+    comment = generate_comment(cpu_score, gpu_score, total_price, selected_count, total_count)
     pdf_buffer = generate_pdf(config_data, total_price, comment)
     
     st.download_button(

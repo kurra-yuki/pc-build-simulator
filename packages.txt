@@ -1,11 +1,12 @@
 # Streamlit Cloud用システムパッケージ
-# PDF生成に必要なフォント関連パッケージ
+# PDF生成と画像ライブラリのビルドに必要なパッケージ
+build-essential
 libfontconfig1
-libfreetype6
-libjpeg62-turbo
-libpng16-16
-libx11-6
-libxext6
+libfreetype6-dev
+libjpeg-dev
+libpng-dev
+libx11-dev
+libxext-dev
 libxrender1
 libxcb1
 libxss1

@@ -40,10 +40,13 @@ type_labels = {
     "FAN": "ファン"
 }
 
-parts_by_type = {
-    tp: parts_df[parts_df["type"] == tp][["name", "price", "score", "power", "socket", "mem_type", "wattage", "power_req"]].reset_index(drop=True)
-    for tp in part_types
-}
+parts_by_type = {}
+for tp in part_types:
+    cols = ["name", "price", "score"]
+    optional_cols = ["power", "socket", "mem_type", "wattage", "power_req"]
+    available_cols = [c for c in optional_cols if c in parts_df.columns]
+    cols.extend(available_cols)
+    parts_by_type[tp] = parts_df[parts_df["type"] == tp][cols].reset_index(drop=True)
 
 # おすすめ自動構成ロジック
 def recommend_parts(parts_df, purpose, budget):
@@ -78,10 +81,15 @@ def recommend_parts(parts_df, purpose, budget):
 def get_attr(tp, name, attr):
     if name == "選択なし":
         return None
+    if tp not in parts_by_type or parts_by_type[tp].empty:
+        return None
     row = parts_by_type[tp][parts_by_type[tp]["name"] == name]
     if row.empty:
         return None
-    return row[attr].values[0] if attr in row.columns and not pd.isna(row[attr].values[0]) else None
+    if attr not in row.columns:
+        return None
+    val = row[attr].values[0]
+    return val if not pd.isna(val) else None
 
 def check_compatibility(selected_parts):
     warnings = []
